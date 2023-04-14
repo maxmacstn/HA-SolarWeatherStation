@@ -27,8 +27,7 @@ This project utilise ESP32's deep sleep feature to minimise battery usage, and t
 - PCB, Connectors, Wires, etc.
 
 ## Connection Diagram
-![](https://github.com/maxmacstn/HA-SolarWeatherStation/blob/main/images/connection-diagram.jpg?raw=true)
-
+![](https://raw.githubusercontent.com/maxmacstn/HA-SolarWeatherStation/main/images/connection_diagram.jpg)
 
 ## Platform and dependencies
 The source code was written on PlatformIO IDE with Arduino framework.
