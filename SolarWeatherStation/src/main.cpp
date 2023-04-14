@@ -4,8 +4,9 @@
 #include <ArduinoHA.h>
 #include <PMS.h>
 #include <HardwareSerial.h>
-#include <DHT.h>
 #include <esp_task_wdt.h>
+#include <Wire.h>
+#include "SHTSensor.h"
 
 
 #define WIFI_STA_NAME "YOUR-WIFI-NAME"
@@ -26,7 +27,7 @@
 #define LED_BUILTIN 5
 #define DHT22_PIN 33
 #define BATT_PIN 35
-#define PMS_EN_PIN 13
+#define SENSOR_EN_PIN 13
 #define TX2_PIN 25
 #define RX2_PIN 26
 #define CHARGE_EN 27
@@ -48,7 +49,7 @@ HASensor *haSensor_humid;
 //Sensors
 PMS pms(Serial2);
 PMS::DATA data;
-DHT dht(DHT22_PIN, DHT22);
+SHTSensor sht(SHTSensor::SHT3X);
 
 //Sensor values
 float vBatt = 0;
@@ -59,7 +60,7 @@ int PM1_0 = 0;
 int PM2_5 = 0;
 int PM10_0 = 0;
 
-bool dhtOK = false;
+bool shtOK = false;
 float temp = 0;
 float humid = 0;
 
@@ -133,17 +134,30 @@ float getBattVoltage(){
 }
 
 bool fetchTempHumid(){
-  dht.begin();
-  delay(2000);
-  humid = dht.readHumidity();
-  temp = dht.readTemperature();
-  dhtOK = !(isnan(humid) || isnan(temp));
-  return dhtOK;
+
+  if (sht.init()) {
+      Serial.print("SHT success\n");
+  } else {
+      Serial.print("SHT failed\n");
+      shtOK = false;
+  }
+  sht.setAccuracy(SHTSensor::SHT_ACCURACY_MEDIUM);
+
+  if(sht.readSample()){
+    temp = sht.getTemperature();
+    humid = sht.getHumidity();
+    shtOK = true;
+  }else{
+    shtOK = false;
+  }
+
+
+  return shtOK;
+
 }
 
 bool fetchPMS(){
-    //PMS
-  digitalWrite(PMS_EN_PIN,1);
+
   Serial.print("Warming up PMS Sensor");
   pms.passiveMode();    // Switch to passive mode
   for (int i = 0 ; i < 30; i ++)
@@ -173,17 +187,24 @@ bool fetchPMS(){
   }
 
   Serial.println();
-  digitalWrite(PMS_EN_PIN,LOW);
   return pmsOK;
 }
 
 void fetchSensorValues(){
 
+  Wire.begin();
+
+  //Turn on PMS sensor and SHT sensor.
+  digitalWrite(SENSOR_EN_PIN,1);
+
   if(!fetchPMS())
     Serial.println("PMS Sensor error");
 
   if(!fetchTempHumid())
-    Serial.println("DHT Sensor error");
+    Serial.println("SHT Sensor error");
+
+  //Turn off PMS sensor and SHT sensor.
+  digitalWrite(SENSOR_EN_PIN,LOW);
   
   Serial.println();
   Serial.printf("vBatt\t= %.2f\n", vBatt);
@@ -249,7 +270,7 @@ bool connectAndSend(){
       haSensor_PM10_0->setAvailability(false);
     }
 
-    if(dhtOK){  //Sensor OK
+    if(shtOK){  //Sensor OK
       haSensor_temp->setValue(temp);
       haSensor_humid->setValue(humid);
     }else{  //Sensor Failure
@@ -282,7 +303,7 @@ void setup() {
   analogSetAttenuation(ADC_11db);
   pinMode(LED_BUILTIN, OUTPUT);
   pinMode(BATT_PIN, INPUT);
-  pinMode(PMS_EN_PIN,OUTPUT);
+  pinMode(SENSOR_EN_PIN,OUTPUT);
   // pinMode(CHARGE_EN, OUTPUT);
   digitalWrite(LED_BUILTIN, HIGH);
   // digitalWrite(CHARGE_EN,LOW);
