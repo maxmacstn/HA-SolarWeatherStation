@@ -7,21 +7,24 @@
 #include <esp_task_wdt.h>
 #include <Wire.h>
 #include "SHTSensor.h"
+#include "BLEDevice.h"
 
 
-#define WIFI_STA_NAME "YOUR-WIFI-NAME"
-#define WIFI_STA_PASS "YOUR-WIFI-PASSWORD"
 
-#define MQTT_SERVER   "MQTT-SERVER-IP"
+#define WIFI_STA_NAME "UniFi"
+#define WIFI_STA_PASS "0891031231"
+
+#define MQTT_SERVER   "192.168.1.15"
 #define MQTT_PORT     1883
-#define MQTT_USERNAME "MQTT-SERVER-USERNAME"
-#define MQTT_PASSWORD "MQTT-SERVER-PASSWORD"
+#define MQTT_USERNAME ""
+#define MQTT_PASSWORD ""
 #define MQTT_NAME     "Solar_weather_station"
 #define DEEP_SLEEP_NORMAL 5     //Deep sleep for 5 mins if battery sufficient
 #define DEEP_SLEEP_LOW 30       //Deep sleep for 30 mins if battery is running low
 #define DEEP_SLEEP_EMPTY 120    //Deep sleep for 2 hr if battery ran out.
 #define WIFI_TIMEOUT  30        //Do not connect Wi-Fi more than 30 seconds
-#define WDT_TIMEOUT 120         //All process should be finished within 2 minutes.
+// #define WDT_TIMEOUT 120         //All process should be finished within 2 minutes.
+#define WDT_TIMEOUT  240        //If enable MiFlora, All process should be finished within 4 minutes.
 #define STA_ID "WeatherStation_1"
 
 #define LED_BUILTIN 5
@@ -32,12 +35,30 @@
 #define RX2_PIN 26
 #define CHARGE_EN 27
 
+#define MAX_POSSIBLE_TEMP 45
+#define MIN_POSSIBLE_TEMP 15
+#define MAX_POSSIBLE_HUMID 100
+#define MIN_POSSIBLE_HUMID  20
+
+#define MI_FLORA_ENA 1
+#define MI_FLORA_MAC "C4:7C:8D:6D:98:2A"
+#define MI_FLORA_SCAN_DURATION 60
+#define MI_FLORA_SCAN_ATTEMPT 2
+// the remote service we wish to connect to
+static BLEUUID serviceUUID("00001204-0000-1000-8000-00805f9b34fb");
+// the characteristic of the remote service we are interested in
+static BLEUUID uuid_version_battery("00001a02-0000-1000-8000-00805f9b34fb");
+static BLEUUID uuid_sensor_data("00001a01-0000-1000-8000-00805f9b34fb");
+static BLEUUID uuid_write_mode("00001a00-0000-1000-8000-00805f9b34fb");
+
+
+
 WiFiClient client;
 // PubSubClient mqtt(client);
 
 //HA Lib
-HADevice *haDevice;
 HAMqtt *haMQTT;
+HADevice *haWeatherStationDevice;
 HASensor *haSensor_vBatt;
 HASensor *haSensor_SoC;
 HASensor *haSensor_PM1_0;
@@ -45,6 +66,14 @@ HASensor *haSensor_PM2_5;
 HASensor *haSensor_PM10_0;
 HASensor *haSensor_temp;
 HASensor *haSensor_humid;
+
+HASensor *haSensor_MiFloraBatt;
+HASensor *haSensor_MiFloraTemp;
+HASensor *haSensor_MiFloraMoisture;
+HASensor *haSensor_MiFloraLight;
+HASensor *haSensor_MiFloraConductivity;
+
+
 
 //Sensors
 PMS pms(Serial2);
@@ -63,6 +92,13 @@ int PM10_0 = 0;
 bool shtOK = false;
 float temp = 0;
 float humid = 0;
+
+bool miFloraOK = false;
+float miFlora_temp = 0;
+int miFlora_moisture = 0;
+int miFlora_light = 0;
+int miFlora_battery = 0;
+int miFlora_conductivity = 0;
 
 enum BatteryCondition {BATT_NORMAL, BATT_LOW, BATT_EMPTY};
 
@@ -146,7 +182,13 @@ bool fetchTempHumid(){
   if(sht.readSample()){
     temp = sht.getTemperature();
     humid = sht.getHumidity();
-    shtOK = true;
+
+    if( temp >= MAX_POSSIBLE_TEMP || temp <= MIN_POSSIBLE_TEMP || humid >= MAX_POSSIBLE_HUMID || humid <= MIN_POSSIBLE_HUMID){
+      shtOK = false;
+    }else{
+      shtOK = true;
+    }
+
   }else{
     shtOK = false;
   }
@@ -190,6 +232,239 @@ bool fetchPMS(){
   return pmsOK;
 }
 
+
+
+
+
+
+
+
+BLEClient* getFloraClient(BLEAddress floraAddress) {
+  BLEClient* floraClient = BLEDevice::createClient();
+
+  if (!floraClient->connect(floraAddress)) {
+    Serial.println("- Mi Flora Connection failed, skipping");
+    return nullptr;
+  }
+
+  Serial.println("- Mi Flora Connection successful");
+  return floraClient;
+}
+
+BLERemoteService* getFloraService(BLEClient* floraClient) {
+  BLERemoteService* floraService = nullptr;
+
+  try {
+    floraService = floraClient->getService(serviceUUID);
+  }
+  catch (...) {
+    // something went wrong
+  }
+  if (floraService == nullptr) {
+    Serial.println("- Mi Flora Failed to find data service");
+  }
+  else {
+    Serial.println("- Mi Flora Found data service");
+  }
+
+  return floraService;
+}
+
+bool forceFloraServiceDataMode(BLERemoteService* floraService) {
+  BLERemoteCharacteristic* floraCharacteristic;
+  
+  // get device mode characteristic, needs to be changed to read data
+  Serial.println("- Force device in data mode");
+  floraCharacteristic = nullptr;
+  try {
+    floraCharacteristic = floraService->getCharacteristic(uuid_write_mode);
+  }
+  catch (...) {
+    // something went wrong
+  }
+  if (floraCharacteristic == nullptr) {
+    Serial.println("-- Failed, skipping device");
+    return false;
+  }
+
+  // write the magic data
+  uint8_t buf[2] = {0xA0, 0x1F};
+  floraCharacteristic->writeValue(buf, 2, true);
+
+  delay(500);
+  return true;
+}
+
+bool readFloraDataCharacteristic(BLERemoteService* floraService) {
+  BLERemoteCharacteristic* floraCharacteristic = nullptr;
+
+  // get the main device data characteristic
+  Serial.println("- Access characteristic from device");
+  try {
+    floraCharacteristic = floraService->getCharacteristic(uuid_sensor_data);
+  }
+  catch (...) {
+    // something went wrong
+  }
+  if (floraCharacteristic == nullptr) {
+    Serial.println("-- Failed, skipping device");
+    return false;
+  }
+
+  // read characteristic value
+  Serial.println("- Read value from characteristic");
+  std::string value;
+  try{
+    value = floraCharacteristic->readValue();
+  }
+  catch (...) {
+    // something went wrong
+    Serial.println("-- Failed, skipping device");
+    return false;
+  }
+  const char *val = value.c_str();
+
+  Serial.print("Hex: ");
+  for (int i = 0; i < 16; i++) {
+    Serial.print((int)val[i], HEX);
+    Serial.print(" ");
+  }
+  Serial.println(" ");
+
+  int16_t* temp_raw = (int16_t*)val;
+  miFlora_temp = (*temp_raw) / ((float)10.0);
+  Serial.print("-- Temperature: ");
+  Serial.println(miFlora_temp);
+
+  miFlora_moisture = val[7];
+  Serial.print("-- Moisture: ");
+  Serial.println(miFlora_moisture);
+
+  miFlora_light = val[3] + val[4] * 256;
+  Serial.print("-- Light: ");
+  Serial.println(miFlora_light);
+ 
+  miFlora_conductivity = val[8] + val[9] * 256;
+  Serial.print("-- Conductivity: ");
+  Serial.println(miFlora_conductivity);
+
+  if (miFlora_temp > 60) {
+    //Unresonable value
+    return false;
+  }
+
+  miFloraOK = true;
+  return true;
+}
+
+bool readFloraBatteryCharacteristic(BLERemoteService* floraService) {
+  BLERemoteCharacteristic* floraCharacteristic = nullptr;
+
+  // get the device battery characteristic
+  Serial.println("- Access battery characteristic from device");
+  try {
+    floraCharacteristic = floraService->getCharacteristic(uuid_version_battery);
+  }
+  catch (...) {
+    // something went wrong
+  }
+  if (floraCharacteristic == nullptr) {
+    Serial.println("-- Failed, skipping battery level");
+    return false;
+  }
+
+  // read characteristic value
+  Serial.println("- Read value from characteristic");
+  std::string value;
+  try{
+    value = floraCharacteristic->readValue();
+  }
+  catch (...) {
+    // something went wrong
+    Serial.println("-- Failed, skipping battery level");
+    return false;
+  }
+  const char *val2 = value.c_str();
+  miFlora_battery = val2[0];
+
+  char buffer[64];
+
+  Serial.print("-- MiFlora Battery: ");
+  Serial.println(miFlora_battery);
+
+
+  return true;
+}
+
+bool processFloraService(BLERemoteService* floraService, char* deviceMacAddress) {
+  // set device in data mode
+  if (!forceFloraServiceDataMode(floraService)) {
+    return false;
+  }
+
+  bool dataSuccess = readFloraDataCharacteristic(floraService);
+  bool batterySuccess = readFloraBatteryCharacteristic(floraService);
+
+  return dataSuccess && batterySuccess;
+}
+
+
+
+
+bool processFloraDevice(BLEAddress floraAddress, char* deviceMacAddress, int tryCount) {
+  Serial.print("Processing Flora device at ");
+  Serial.print(floraAddress.toString().c_str());
+  Serial.print(" (try ");
+  Serial.print(tryCount);
+  Serial.println(")");
+
+  // connect to flora ble server
+  BLEClient* floraClient = getFloraClient(floraAddress);
+  if (floraClient == nullptr) {
+    return false;
+  }
+
+  // connect data service
+  BLERemoteService* floraService = getFloraService(floraClient);
+  if (floraService == nullptr) {
+    floraClient->disconnect();
+    return false;
+  }
+
+  // process devices data
+  bool success = processFloraService(floraService, deviceMacAddress);
+  // disconnect from device
+  floraClient->disconnect();
+
+  return success;
+}
+
+bool fetchMiFlora(){
+    //https://github.com/sidddy/flora/blob/master/flora/flora.ino
+
+
+    BLEDevice::init("");
+    BLEDevice::setPower(ESP_PWR_LVL_P7);
+
+    char* deviceMacAddress = MI_FLORA_MAC;
+    BLEAddress floraAddress(deviceMacAddress);
+    uint8_t tryCount = 0;
+
+    while (tryCount < MI_FLORA_SCAN_ATTEMPT) {
+      tryCount++;
+      if (processFloraDevice(floraAddress, deviceMacAddress, tryCount)) {
+        miFloraOK = true;
+        break;
+      }
+      delay(1000);
+    }
+
+    BLEDevice::deinit();
+
+    return miFloraOK;
+
+}
+
 void fetchSensorValues(){
 
   Wire.begin();
@@ -203,10 +478,15 @@ void fetchSensorValues(){
   if(!fetchTempHumid())
     Serial.println("SHT Sensor error");
 
+  if(MI_FLORA_ENA && fetchMiFlora()){
+    Serial.println("Mi Flora Failed");
+  }
+
   //Turn off PMS sensor and SHT sensor.
   digitalWrite(SENSOR_EN_PIN,LOW);
   
   Serial.println();
+  Serial.println("---Weather Station Data---");
   Serial.printf("vBatt\t= %.2f\n", vBatt);
   Serial.printf("SoC\t= %-3d%\n", SoC);
   Serial.printf("PM1\t= %-3d\n", data.PM_AE_UG_1_0);
@@ -214,6 +494,16 @@ void fetchSensorValues(){
   Serial.printf("PM10\t= %-3d\n", data.PM_AE_UG_10_0);
   Serial.printf("Temp\t= %.2fc\n", temp);
   Serial.printf("Humid\t= %2.f%\n", humid);
+
+  if (MI_FLORA_ENA){
+    Serial.println("---Mi Flora Data---");
+    Serial.printf("Battery\t=  %-3d%\n", miFlora_battery);
+    Serial.printf("Soil moisture\t=  %-3d%\n", miFlora_moisture);
+    Serial.printf("Soil conductivity\t=  %dus/cm\n", miFlora_conductivity);
+    Serial.printf("Temperature\t=  %.2fc\n", miFlora_temp);
+    Serial.printf("Light\t=  %dlux\n", miFlora_light);
+
+  }
 
  
 }
@@ -278,6 +568,24 @@ bool connectAndSend(){
       haSensor_humid->setAvailability(false);
     }
 
+    if (MI_FLORA_ENA){
+        if(miFloraOK){
+          haSensor_MiFloraBatt->setValue(miFlora_battery);
+          haSensor_MiFloraTemp->setValue(miFlora_temp);
+          haSensor_MiFloraConductivity->setValue(miFlora_conductivity);
+          haSensor_MiFloraLight->setValue(miFlora_light);
+          haSensor_MiFloraMoisture->setValue(miFlora_moisture);
+        }else{
+          haSensor_MiFloraBatt->setAvailability(true);
+          haSensor_MiFloraTemp->setAvailability(true);
+          haSensor_MiFloraConductivity->setAvailability(true);
+          haSensor_MiFloraMoisture->setAvailability(true);
+          haSensor_MiFloraLight->setAvailability(true);
+        }
+
+
+    }
+
     haMQTT->loop();
     delay(10);
   }
@@ -323,8 +631,8 @@ void setup() {
   //initialise HA MQTT Library
   char id[17] = STA_ID;
 
-  haDevice = new HADevice(id);
-  haMQTT = new HAMqtt(client, *haDevice);
+  haWeatherStationDevice = new HADevice(id);
+  haMQTT = new HAMqtt(client, *haWeatherStationDevice);
   haSensor_vBatt = new HASensor("vBatt");
   haSensor_SoC = new HASensor("SoC");
   haSensor_PM1_0 = new HASensor("PM1_0");
@@ -334,9 +642,9 @@ void setup() {
   haSensor_humid = new HASensor("HUMID");
 
 
-  haDevice->setName("SolarWeatherStation");
-  haDevice->setManufacturer("Magi");
-  haDevice->setModel("ESP32 WROVER B");
+  haWeatherStationDevice->setName("SolarWeatherStation");
+  haWeatherStationDevice->setManufacturer("Magi");
+  haWeatherStationDevice->setModel("ESP32 WROVER B");
 
   haSensor_vBatt->setUnitOfMeasurement("V");
   haSensor_vBatt->setDeviceClass("voltage");
@@ -372,6 +680,44 @@ void setup() {
   haSensor_humid->setDeviceClass("humidity");
   haSensor_humid->setIcon("mdi:water-percent");
   haSensor_humid->setName("Humidity");
+
+
+  if (MI_FLORA_ENA){
+      haSensor_MiFloraBatt = new HASensor("miflora_vBatt");
+      haSensor_MiFloraTemp = new HASensor("miflora_temp");
+      haSensor_MiFloraMoisture = new HASensor("miflora_moisture");
+      haSensor_MiFloraLight = new HASensor("miflora_light");
+      haSensor_MiFloraConductivity = new HASensor("miflora_conductivity");
+
+
+      haSensor_MiFloraBatt->setUnitOfMeasurement("%");
+      haSensor_MiFloraBatt->setDeviceClass("battery");
+      haSensor_MiFloraBatt->setIcon("mdi:battery");
+      haSensor_MiFloraBatt->setName("Mi Flora Battery");
+
+      haSensor_MiFloraTemp->setUnitOfMeasurement("°C");
+      haSensor_MiFloraTemp->setDeviceClass("temperature");
+      haSensor_MiFloraTemp->setIcon("mdi:thermometer");
+      haSensor_MiFloraTemp->setName("Mi Flora temperature");
+
+      haSensor_MiFloraTemp->setUnitOfMeasurement("%");
+      haSensor_MiFloraMoisture->setDeviceClass("moisture");
+      haSensor_MiFloraMoisture->setIcon("mdi:water-percent");
+      haSensor_MiFloraMoisture->setName("Mi Flora Moisture");
+
+      haSensor_MiFloraLight->setUnitOfMeasurement("lx");
+      haSensor_MiFloraLight->setDeviceClass("illuminance");
+      haSensor_MiFloraLight->setIcon("mdi:weather-sunny");
+      haSensor_MiFloraLight->setName("Mi Flora Light");
+
+      haSensor_MiFloraConductivity->setUnitOfMeasurement("µS/cm");
+      haSensor_MiFloraConductivity->setIcon("mdi:flower");
+      haSensor_MiFloraConductivity->setName("Mi Flora Conductivity");
+
+  }
+
+
+
   
   //Get values from sensors.
   fetchSensorValues();
