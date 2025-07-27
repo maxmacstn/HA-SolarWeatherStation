@@ -8,9 +8,10 @@ This project utilise ESP32's deep sleep feature to minimise battery usage, and t
 
 ## Features
 - Low power: Able to operate without sunlight for at least 1 week, in case of rainy season.
-- Fully Waterproof: Isolated compartment between sensors part and MCU part.
-- Works with Home Assistant: the weather station will automagically added into Home Assistant via MQTT discovery.
-- Adaptive sleeping: sleep 5 minutes in normal condition, 30 mins when battery is less than 30%, and completely stopped operating if the battery reach critical level.
+- Fully Waterproof: Isolated compartment between sensor and MCU compartment.
+- Works with Home Assistant: the weather station will automagically be added into Home Assistant via MQTT discovery.
+- Adaptive sleeping: sleep 5 minutes in normal condition, 30 mins when battery is less than 30%, and completely stops operating if the battery reaches critical level.
+- Mi Flora support: Since the weather station is already installed outside of my home, it can act as a BLE gateway to receive the data from the soil sensor and send it via MQTT as well.
 
 ## Components
 - TTGO T18 ESP32 Development board
@@ -43,7 +44,7 @@ Library used:
 	- Use SHT3x sensor module  instead of DHT22. This significantly improves stability and accuracy.
 	- Re-wire the sensor component box using I2C lines (instead of DHT22's one-wire protocol).
 	- Use common ground for PMS sensor and SHT sensor.
-	- Use single 18650 battery instead of two. (one battery can lasts more than one week without charging.) 
+	- Use a single 18650 battery instead of two. (One battery lasts more than one week without charging.) 
 	
 ## Screenshots
 
