@@ -656,17 +656,17 @@ void setup() {
   haSensor_SoC->setIcon("mdi:battery");
   haSensor_SoC->setName("Battery SoC");
 
-  haSensor_PM1_0->setUnitOfMeasurement("μg/m³");
+  haSensor_PM1_0->setUnitOfMeasurement("µg/m³");
   haSensor_PM1_0->setDeviceClass("pm1");
   haSensor_PM1_0->setIcon("mdi:weather-fog");
   haSensor_PM1_0->setName("PM1");
 
-  haSensor_PM2_5->setUnitOfMeasurement("μg/m³");
+  haSensor_PM2_5->setUnitOfMeasurement("µg/m³");
   haSensor_PM2_5->setDeviceClass("pm25");
   haSensor_PM2_5->setIcon("mdi:weather-fog");
   haSensor_PM2_5->setName("PM2.5");
 
-  haSensor_PM10_0->setUnitOfMeasurement("μg/m³");
+  haSensor_PM10_0->setUnitOfMeasurement("µg/m³");
   haSensor_PM10_0->setDeviceClass("pm10");
   haSensor_PM10_0->setIcon("mdi:weather-fog");
   haSensor_PM10_0->setName("PM10");
@@ -700,7 +700,7 @@ void setup() {
       haSensor_MiFloraTemp->setIcon("mdi:thermometer");
       haSensor_MiFloraTemp->setName("Mi Flora temperature");
 
-      haSensor_MiFloraTemp->setUnitOfMeasurement("%");
+      haSensor_MiFloraMoisture->setUnitOfMeasurement("%");
       haSensor_MiFloraMoisture->setDeviceClass("moisture");
       haSensor_MiFloraMoisture->setIcon("mdi:water-percent");
       haSensor_MiFloraMoisture->setName("Mi Flora Moisture");
