@@ -11,8 +11,8 @@
 
 
 
-#define WIFI_STA_NAME "UniFi"
-#define WIFI_STA_PASS "0891031231"
+#define WIFI_STA_NAME "YOUR_WIFI_SSID"
+#define WIFI_STA_PASS "YOUR_WIFI_PASSWORD"
 
 #define MQTT_SERVER   "192.168.1.15"
 #define MQTT_PORT     1883
@@ -42,7 +42,7 @@
 
 //Mi Flora gateway features
 #define MI_FLORA_ENA true                   //Set to "true" if you want the solar weather station to act as a bluetooth gateway. 
-#define MI_FLORA_MAC "C4:7C:8D:6D:98:2A"    //Mi Flora mac address.
+#define MI_FLORA_MAC "XX:XX:XX:XX:XX:XX"    //Mi Flora mac address.
 #define MI_FLORA_SCAN_DURATION 60           //Scan duration.
 #define MI_FLORA_SCAN_ATTEMPT 2             //Scan attempt.
 
