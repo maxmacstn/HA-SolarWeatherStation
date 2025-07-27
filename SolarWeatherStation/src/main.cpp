@@ -41,7 +41,7 @@
 #define MIN_POSSIBLE_HUMID  20
 
 //Mi Flora gateway features
-#define MI_FLORA_ENA true                   //Set to "true" if you want the solar weather station to act as a bluetooth gateway. 
+#define MI_FLORA_ENA false                   //Set to "true" if you want the solar weather station to act as a bluetooth gateway. 
 #define MI_FLORA_MAC "XX:XX:XX:XX:XX:XX"    //Mi Flora mac address.
 #define MI_FLORA_SCAN_DURATION 60           //Scan duration.
 #define MI_FLORA_SCAN_ATTEMPT 2             //Scan attempt.
