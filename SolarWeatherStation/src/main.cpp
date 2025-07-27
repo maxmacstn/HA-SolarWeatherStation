@@ -23,8 +23,8 @@
 #define DEEP_SLEEP_LOW 30       //Deep sleep for 30 mins if battery is running low
 #define DEEP_SLEEP_EMPTY 120    //Deep sleep for 2 hr if battery ran out.
 #define WIFI_TIMEOUT  30        //Do not connect Wi-Fi more than 30 seconds
-// #define WDT_TIMEOUT 120         //All process should be finished within 2 minutes.
-#define WDT_TIMEOUT  240        //If enable MiFlora, All process should be finished within 4 minutes.
+#define WDT_TIMEOUT 120 *1000         //All process should be finished within 2 minutes.
+#define WDT_TIMEOUT_W_MIFLORA  240 *1000        //If enable MiFlora, All process should be finished within 4 minutes.
 #define STA_ID "WeatherStation_1"
 
 #define LED_BUILTIN 5
@@ -40,10 +40,13 @@
 #define MAX_POSSIBLE_HUMID 100
 #define MIN_POSSIBLE_HUMID  20
 
-#define MI_FLORA_ENA 1
-#define MI_FLORA_MAC "C4:7C:8D:6D:98:2A"
-#define MI_FLORA_SCAN_DURATION 60
-#define MI_FLORA_SCAN_ATTEMPT 2
+//Mi Flora gateway features
+#define MI_FLORA_ENA true                   //Set to "true" if you want the solar weather station to act as a bluetooth gateway. 
+#define MI_FLORA_MAC "C4:7C:8D:6D:98:2A"    //Mi Flora mac address.
+#define MI_FLORA_SCAN_DURATION 60           //Scan duration.
+#define MI_FLORA_SCAN_ATTEMPT 2             //Scan attempt.
+
+
 // the remote service we wish to connect to
 static BLEUUID serviceUUID("00001204-0000-1000-8000-00805f9b34fb");
 // the characteristic of the remote service we are interested in
@@ -109,18 +112,18 @@ void deepSleep(BatteryCondition BatteryCondition){
   {
   case BATT_NORMAL:
     Serial.println("Start deep sleep (normal)");
-    esp_sleep_enable_timer_wakeup(DEEP_SLEEP_NORMAL * 60  * 1000000);
+    esp_sleep_enable_timer_wakeup(DEEP_SLEEP_NORMAL * 60  * 1000000u);
     break;
   case BATT_LOW:
     Serial.println("Start deep sleep (batt low)");
-    esp_sleep_enable_timer_wakeup(DEEP_SLEEP_LOW * 60  * 1000000);
+    esp_sleep_enable_timer_wakeup(DEEP_SLEEP_LOW * 60  * 1000000u);
     break;
   case BATT_EMPTY:
     Serial.println("Start deep sleep (batt empty)");
-    esp_sleep_enable_timer_wakeup(DEEP_SLEEP_EMPTY * 60  * 1000000);
+    esp_sleep_enable_timer_wakeup(DEEP_SLEEP_EMPTY * 60  * 1000000u);
     break;
   default:
-    esp_sleep_enable_timer_wakeup(DEEP_SLEEP_NORMAL * 60  * 1000000);
+    esp_sleep_enable_timer_wakeup(DEEP_SLEEP_NORMAL * 60  * 1000000u);
     break;
   }
 
@@ -313,7 +316,7 @@ bool readFloraDataCharacteristic(BLERemoteService* floraService) {
 
   // read characteristic value
   Serial.println("- Read value from characteristic");
-  std::string value;
+  String value;
   try{
     value = floraCharacteristic->readValue();
   }
@@ -375,7 +378,7 @@ bool readFloraBatteryCharacteristic(BLERemoteService* floraService) {
 
   // read characteristic value
   Serial.println("- Read value from characteristic");
-  std::string value;
+  String value;
   try{
     value = floraCharacteristic->readValue();
   }
@@ -548,12 +551,12 @@ bool connectAndSend(){
   //Try to publish at least 10 times (in order to make haMQTT loop works)
   for(int i = 0; i < 10; i++){
     haSensor_vBatt->setValue(vBatt);
-    haSensor_SoC->setValue(SoC);
+    haSensor_SoC->setValue(static_cast<u_int16_t>(SoC));
 
     if (pmsOK){ //Sensor OK
-      haSensor_PM1_0->setValue(PM1_0);
-      haSensor_PM2_5->setValue(PM2_5);
-      haSensor_PM10_0->setValue(PM10_0);
+      haSensor_PM1_0->setValue(static_cast<u_int16_t>(PM1_0));
+      haSensor_PM2_5->setValue(static_cast<u_int16_t>(PM2_5));
+      haSensor_PM10_0->setValue(static_cast<u_int16_t>(PM10_0));
     }else{  //Sensor Failure
       haSensor_PM1_0->setAvailability(false);
       haSensor_PM2_5->setAvailability(false);
@@ -570,11 +573,11 @@ bool connectAndSend(){
 
     if (MI_FLORA_ENA){
         if(miFloraOK){
-          haSensor_MiFloraBatt->setValue(miFlora_battery);
+          haSensor_MiFloraBatt->setValue(static_cast<u_int16_t>(miFlora_battery));
           haSensor_MiFloraTemp->setValue(miFlora_temp);
-          haSensor_MiFloraConductivity->setValue(miFlora_conductivity);
-          haSensor_MiFloraLight->setValue(miFlora_light);
-          haSensor_MiFloraMoisture->setValue(miFlora_moisture);
+          haSensor_MiFloraConductivity->setValue(static_cast<u_int16_t>(miFlora_conductivity));
+          haSensor_MiFloraLight->setValue(static_cast<u_int16_t>(miFlora_light));
+          haSensor_MiFloraMoisture->setValue(static_cast<u_int16_t>(miFlora_moisture));
         }else{
           haSensor_MiFloraBatt->setAvailability(true);
           haSensor_MiFloraTemp->setAvailability(true);
@@ -598,7 +601,13 @@ bool connectAndSend(){
 void setup() {
 
   //Config WDT
-  esp_task_wdt_init(WDT_TIMEOUT, true); 
+  esp_task_wdt_config_t twdt_config = {
+      .timeout_ms =  MI_FLORA_ENA? WDT_TIMEOUT_W_MIFLORA: WDT_TIMEOUT,
+      .idle_core_mask = (1 << CONFIG_FREERTOS_NUMBER_OF_CORES) - 1,    // Bitmask of all cores
+      .trigger_panic = true,
+  };
+  esp_task_wdt_deinit();
+  esp_task_wdt_init(&twdt_config); 
   esp_task_wdt_add(NULL); 
 
   Serial.begin(115200);
@@ -620,7 +629,7 @@ void setup() {
   delay(2000);
   vBatt = getBattVoltage();
   SoC = calculateSoC(vBatt);
-  digitalWrite(CHARGE_EN,HIGH);
+  // digitalWrite(CHARGE_EN,HIGH);
 
   if (SoC == 0){
     //Battery too low, can't do anything further.
